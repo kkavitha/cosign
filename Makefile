@@ -138,8 +138,40 @@ snapshot:
 
 .PHONY: cosigned
 cosigned: lint ## Build cosigned binary
-	CGO_ENABLED=0 go build -trimpath -ldflags $(LDFLAGS) -o $@ ./cmd/cosign/webhook
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags $(LDFLAGS) -o $@ ./cmd/cosign/webhook
 
 .PHONY: sget
 sget: ## Build sget binary
 	go build -trimpath -ldflags $(LDFLAGS) -o $@ ./cmd/sget
+
+# Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
+CRD_OPTIONS ?= "crd:trivialVersions=true,preserveUnknownFields=false"
+
+.PHONY: manifests
+manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+	$(CONTROLLER_GEN) $(CRD_OPTIONS) rbac:roleName=cosigned-rbac webhook paths="./pkg/cosign/kubernetes/api/..." output:crd:artifacts:config=config/crd/bases
+
+.PHONY: generate
+generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+	$(CONTROLLER_GEN) object paths="./pkg/cosign/kubernetes/api/..."
+
+CONTROLLER_GEN ?= $(shell pwd)/bin/controller-gen
+
+.PHONY: controller-gen
+controller-gen: ## Download controller-gen locally if necessary.
+	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.4.1)
+
+# go-get-tool will 'go get' any package $2 and install it to $1.
+PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
+define go-get-tool
+@[ -f $(1) ] || { \
+set -e ;\
+TMP_DIR=$$(mktemp -d) ;\
+cd $$TMP_DIR ;\
+go mod init tmp ;\
+echo "Downloading $(2)" ;\
+GOBIN=$(PROJECT_DIR)/bin go get $(2);\
+rm -rf $$TMP_DIR ;\
+}
+endef
+

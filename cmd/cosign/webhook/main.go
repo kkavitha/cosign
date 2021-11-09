@@ -78,7 +78,7 @@ var types = map[schema.GroupVersionKind]resourcesemantics.GenericCRD{
 }
 
 func NewValidatingAdmissionController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-	validator := cwebhook.NewValidator(ctx, *secretName)
+	validator := cwebhook.NewValidator(ctx)
 
 	return validation.NewAdmissionController(ctx,
 		// Name of the resource webhook.
@@ -108,7 +108,7 @@ func NewValidatingAdmissionController(ctx context.Context, cmw configmap.Watcher
 }
 
 func NewMutatingAdmissionController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-	validator := cwebhook.NewValidator(ctx, *secretName)
+	validator := cwebhook.NewValidator(ctx)
 
 	return defaulting.NewAdmissionController(ctx,
 		// Name of the resource webhook.
