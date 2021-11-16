@@ -68,7 +68,6 @@ type Image struct {
 	// NamePattern defines the image name pattern as a (e.g. `registry/path/to/image`).
 	NamePattern string `json:"namePattern"`
 
-	// +kubebuilder:validation:MinItems=1
 	// Keys is a map with the references to the signing keys.
 	Keys []KeyToImageMapping `json:"keys"`
 }

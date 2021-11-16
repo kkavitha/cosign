@@ -73,7 +73,6 @@ spec:
                             required:
                             - name
                             type: object
-                          minItems: 1
                           type: array
                         namePattern:
                           description: NamePattern defines the image name pattern
