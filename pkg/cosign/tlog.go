@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-openapi/strfmt"
 	"github.com/go-openapi/swag"
@@ -55,27 +56,32 @@ func GetRekorPub() string {
 }
 
 // TLogUpload will upload the signature, public key and payload to the transparency log.
-func TLogUpload(rekorClient *client.Rekor, signature, payload []byte, pemBytes []byte) (*models.LogEntryAnon, error) {
+func TLogUpload(rekorClient *client.Rekor, signature, payload []byte, pemBytes []byte, timeout time.Duration) (*models.LogEntryAnon, error) {
 	re := rekorEntry(payload, signature, pemBytes)
 	returnVal := models.Rekord{
 		APIVersion: swag.String(re.APIVersion()),
 		Spec:       re.RekordObj,
 	}
-	return doUpload(rekorClient, &returnVal)
+	return doUpload(rekorClient, &returnVal, timeout)
 }
 
 // TLogUploadInTotoAttestation will upload and in-toto entry for the signature and public key to the transparency log.
-func TLogUploadInTotoAttestation(rekorClient *client.Rekor, signature, pemBytes []byte) (*models.LogEntryAnon, error) {
+func TLogUploadInTotoAttestation(rekorClient *client.Rekor, signature, pemBytes []byte, timeout time.Duration) (*models.LogEntryAnon, error) {
 	e := intotoEntry(signature, pemBytes)
 	returnVal := models.Intoto{
 		APIVersion: swag.String(e.APIVersion()),
 		Spec:       e.IntotoObj,
 	}
-	return doUpload(rekorClient, &returnVal)
+	return doUpload(rekorClient, &returnVal, timeout)
 }
 
-func doUpload(rekorClient *client.Rekor, pe models.ProposedEntry) (*models.LogEntryAnon, error) {
-	params := entries.NewCreateLogEntryParams()
+func doUpload(rekorClient *client.Rekor, pe models.ProposedEntry, timeout time.Duration) (*models.LogEntryAnon, error) {
+	var params *entries.CreateLogEntryParams
+	if timeout != time.Duration(0) {
+		params = entries.NewCreateLogEntryParamsWithTimeout(timeout)
+	} else {
+		params = entries.NewCreateLogEntryParams()
+	}
 	params.SetProposedEntry(pe)
 	resp, err := rekorClient.Entries.CreateLogEntry(params)
 	if err != nil {
@@ -139,20 +145,42 @@ func GetTlogEntry(rekorClient *client.Rekor, uuid string) (*models.LogEntryAnon,
 	return nil, errors.New("empty response")
 }
 
+func proposedEntry(b64Sig string, payload, pubKey []byte) ([]models.ProposedEntry, error) {
+	var proposedEntry []models.ProposedEntry
+	signature, err := base64.StdEncoding.DecodeString(b64Sig)
+	if err != nil {
+		return nil, errors.Wrap(err, "decoding base64 signature")
+	}
+
+	// The fact that there's no signature (or empty rather), implies
+	// that this is an Attestation that we're verifying.
+	if len(signature) == 0 {
+		te := intotoEntry(payload, pubKey)
+		entry := &models.Intoto{
+			APIVersion: swag.String(te.APIVersion()),
+			Spec:       te.IntotoObj,
+		}
+		proposedEntry = []models.ProposedEntry{entry}
+	} else {
+		re := rekorEntry(payload, signature, pubKey)
+		entry := &models.Rekord{
+			APIVersion: swag.String(re.APIVersion()),
+			Spec:       re.RekordObj,
+		}
+		proposedEntry = []models.ProposedEntry{entry}
+	}
+	return proposedEntry, nil
+}
+
 func FindTlogEntry(rekorClient *client.Rekor, b64Sig string, payload, pubKey []byte) (uuid string, index int64, err error) {
 	searchParams := entries.NewSearchLogQueryParams()
 	searchLogQuery := models.SearchLogQuery{}
-	signature, err := base64.StdEncoding.DecodeString(b64Sig)
+	proposedEntry, err := proposedEntry(b64Sig, payload, pubKey)
 	if err != nil {
-		return "", 0, errors.Wrap(err, "decoding base64 signature")
-	}
-	re := rekorEntry(payload, signature, pubKey)
-	entry := &models.Rekord{
-		APIVersion: swag.String(re.APIVersion()),
-		Spec:       re.RekordObj,
+		return "", 0, err
 	}
 
-	searchLogQuery.SetEntries([]models.ProposedEntry{entry})
+	searchLogQuery.SetEntries(proposedEntry)
 
 	searchParams.SetEntry(&searchLogQuery)
 	resp, err := rekorClient.Entries.SearchLogQuery(searchParams)

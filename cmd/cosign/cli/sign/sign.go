@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -245,7 +246,8 @@ func signDigest(ctx context.Context, digest name.Digest, payload []byte, ko KeyO
 		return err
 	} else if uploadTLog {
 		bundle, err := UploadToTlog(ctx, sv, ko.RekorURL, func(r *client.Rekor, b []byte) (*models.LogEntryAnon, error) {
-			return cosign.TLogUpload(r, signature, payload, b)
+			// TODO - Defaulting the timeout to zero as the CLI doesn't accept timeout.
+			return cosign.TLogUpload(r, signature, payload, b, time.Duration(0))
 		})
 		if err != nil {
 			return err
@@ -338,9 +340,9 @@ func SignerFromKeyOpts(ctx context.Context, certPath string, ko KeyOpts) (*CertS
 		// user.
 		pkcs11Key, ok := k.(*pkcs11key.Key)
 		if ok {
-			certFromPKCS11, err := pkcs11Key.Certificate()
+			certFromPKCS11, _ := pkcs11Key.Certificate()
 			var pemBytes []byte
-			if err != nil {
+			if certFromPKCS11 == nil {
 				fmt.Fprintln(os.Stderr, "warning: no x509 certificate retrieved from the PKCS11 token")
 			} else {
 				pemBytes, err = cryptoutils.MarshalCertificateToPEM(certFromPKCS11)

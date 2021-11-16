@@ -9,10 +9,10 @@ cosign attest [flags]
 ### Examples
 
 ```
-  cosign attest --key <key path>|<kms uri> [--predicate <path>] [--a key=value] [--upload=true|false] [--f] [--r] <image uri>
+  cosign attest --key <key path>|<kms uri> [--predicate <path>] [--a key=value] [--no-upload=true|false] [--f] [--r] <image uri>
 
   # attach an attestation to a container image Google sign-in (experimental)
-  COSIGN_EXPERIMENTAL=1 cosign attest --predicate <FILE> --type <TYPE> <IMAGE>
+  COSIGN_EXPERIMENTAL=1 cosign attest --timeout 90s --predicate <FILE> --type <TYPE> <IMAGE>
 
   # attach an attestation to a container image with a local key pair file
   cosign attest --predicate <FILE> --type <TYPE> --key cosign.key <IMAGE>
@@ -53,8 +53,10 @@ cosign attest [flags]
       --predicate string                                                                         path to the predicate file.
   -r, --recursive                                                                                if a multi-arch image is specified, additionally sign each discrete image
       --rekor-url string                                                                         [EXPERIMENTAL] address of rekor STL server (default "https://rekor.sigstore.dev")
+      --replace                                                                                  
       --sk                                                                                       whether to use a hardware security key
       --slot string                                                                              security key slot to use for generated key (default: signature) (authentication|signature|card-authentication|key-management)
+      --timeout duration                                                                         HTTP Timeout defaults to 30 seconds (default 30s)
       --type string                                                                              specify a predicate type (slsaprovenance|link|spdx|custom) or an URI (default "custom")
 ```
 
