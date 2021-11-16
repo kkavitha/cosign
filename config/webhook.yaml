@@ -43,8 +43,7 @@ spec:
         imagePullPolicy: Always
         # This is the Go import path for the binary that is containerized
         # and substituted here.
-        image: localhost:5000/local-cosigned
-        args: ["-secret-name=verification-key"]
+        image: ko://github.com/sigstore/cosign/cmd/cosign/webhook
         resources:
           requests:
             cpu: 20m
@@ -97,9 +96,7 @@ spec:
     exclude:
       resources:
         namespaces:
-          - image-policy-system
           - kube-system
-          - cert-manager
     keys:
     - name: cosign-key-1
       publicKey:  "<public key goes here>"
