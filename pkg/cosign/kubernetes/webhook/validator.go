@@ -38,16 +38,20 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	v1alpha1 "github.com/sigstore/cosign/pkg/cosign/kubernetes/api/v1alpha1"
 	"github.com/gobwas/glob"
+	listersv1 "k8s.io/client-go/listers/core/v1"
+	secretinformer "knative.dev/pkg/injection/clients/namespacedkube/informers/core/v1/secret"
 )
 
 type Validator struct {
 	client     kubernetes.Interface
 	dynamicClient dynamic.Interface
+	lister     listersv1.SecretLister
 }
 
 func NewValidator(ctx context.Context) *Validator {
 	return &Validator{
 		client:     kubeclient.Get(ctx),
+		lister:     secretinformer.Get(ctx).Lister(),
 		dynamicClient: dynamicclient.Get(ctx),
 	}
 }
@@ -115,6 +119,7 @@ func (v *Validator) validatePodSpec(ctx context.Context, ps *corev1.PodSpec, opt
 		return apis.ErrGeneric(err.Error(), apis.CurrentField)
 	}
 	var clusterPolicy = schema.GroupVersionResource{Group: "sigstore.dev", Version: "v1alpha1", Resource: "clusterimagepolicies"}
+	var identity = schema.GroupVersionResource{Group: "sigstore.dev", Version: "v1alpha1", Resource: "identities"}
 	
 	imagePolicy, _ := v.dynamicClient.Resource(clusterPolicy).Get(ctx, "image-policy", metav1.GetOptions{})
 	unstructured := imagePolicy.UnstructuredContent()
@@ -147,12 +152,25 @@ func (v *Validator) validatePodSpec(ctx context.Context, ps *corev1.PodSpec, opt
 			// Match the pattern
 			// if matched, use the respective key to verify
 			// Read the keys from the CRD from the namepattern that matches
-			keys := []*ecdsa.PublicKey{}
+			identities := []v1alpha1.Identity{}
 			matched := false
-			for _, imagePattern := range imagePolicyType.Spec.Verification.Images {
+			validationErrors := []error{}
+			for _, imagePattern := range imagePolicyType.Spec.Images {
 				imagePatternGlob := glob.MustCompile(imagePattern.NamePattern)
 				if(imagePatternGlob.Match(c.Image)){
-					keys, _ = getKeys(ctx, imagePattern.Keys, imagePolicyType.Spec.Verification.Keys)
+					// read the list of identities
+					identityRefs := imagePattern.Identities
+					for _, identityRef := range identityRefs {
+						identityResource, errs := getIdentityResource(v, identity, ctx, identityRef)
+						if errs != nil {
+							continue
+						}
+						identities = append(identities, identityResource)
+					}
+					for _, identity := range identities {
+						err := valid(ctx, ref, identity, v.lister, ociremote.WithRemoteOptions(remote.WithAuthFromKeychain(kc)))
+						validationErrors = append(validationErrors, err)
+					}
 					matched = true
 					break
 				}
@@ -166,7 +184,7 @@ func (v *Validator) validatePodSpec(ctx context.Context, ps *corev1.PodSpec, opt
 				continue
 			}
 
-			if err := valid(ctx, ref, keys, ociremote.WithRemoteOptions(remote.WithAuthFromKeychain(kc))); err != nil {
+			if  err != nil {
 				errorField := apis.ErrGeneric(err.Error(), "image").ViaFieldIndex(field, i)
 				errorField.Details = c.Image
 				errs = errs.Also(errorField)
@@ -179,6 +197,19 @@ func (v *Validator) validatePodSpec(ctx context.Context, ps *corev1.PodSpec, opt
 	checkContainers(ps.Containers, "containers")
 
 	return errs
+}
+
+func getIdentityResource(v *Validator, identity schema.GroupVersionResource, ctx context.Context, identityRef v1alpha1.IdentityRef) (v1alpha1.Identity, error) {
+	unstructuredIdentityResource, _ := v.dynamicClient.Resource(identity).Get(ctx, identityRef.Name, metav1.GetOptions{})
+
+	unstructured := unstructuredIdentityResource.UnstructuredContent()
+	var identityResource v1alpha1.Identity
+	error1 := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructured, &identityResource)
+	if error1 != nil {
+		logging.FromContext(ctx).Warnf("Unable to convert unstructured type to imagepolicy struct: %v", error1)
+		return v1alpha1.Identity{}, error1
+	}
+	return identityResource, nil
 }
 
 // ResolvePodSpecable implements duckv1.PodSpecValidator

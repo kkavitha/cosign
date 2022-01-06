@@ -33,12 +33,14 @@ import (
 	ociremote "github.com/sigstore/cosign/pkg/oci/remote"
 	"github.com/sigstore/sigstore/pkg/signature"
 	v1alpha1 "github.com/sigstore/cosign/pkg/cosign/kubernetes/api/v1alpha1"
+	listersv1 "k8s.io/client-go/listers/core/v1"
 )
 
-func valid(ctx context.Context, ref name.Reference, keys []*ecdsa.PublicKey, opts ...ociremote.Option) error {
-	if len(keys) == 0 {
+func valid(ctx context.Context, ref name.Reference, identity v1alpha1.Identity,lister listersv1.SecretLister, opts ...ociremote.Option) error {
+	
+	if identity.Spec.Secret == "" {
 		// If there are no keys, then verify against the fulcio root.
-		sps, err := validSignatures(ctx, ref, nil /* verifier */, opts...)
+		sps, err := validSignatures(ctx, ref, nil /* verifier */, identity.Spec.Subject, opts...)
 		if err != nil {
 			return err
 		}
@@ -46,67 +48,85 @@ func valid(ctx context.Context, ref name.Reference, keys []*ecdsa.PublicKey, opt
 			return nil
 		}
 		return errors.New("no valid signatures were found")
-	}
-	// We return nil if ANY key matches
-	var lastErr error
-	for _, k := range keys {
-		verifier, err := signature.LoadECDSAVerifier(k, crypto.SHA256)
+	}else{
+		var lastErr error
+		s, err := lister.Secrets(identity.Spec.Namespace).Get(identity.Spec.Secret)
 		if err != nil {
-			logging.FromContext(ctx).Errorf("error creating verifier: %v", err)
-			lastErr = err
-			continue
+			return apis.ErrGeneric(err.Error(), apis.CurrentField)
 		}
 
-		sps, err := validSignatures(ctx, ref, verifier, opts...)
-		if err != nil {
-			logging.FromContext(ctx).Errorf("error validating signatures: %v", err)
-			lastErr = err
-			continue
+		keys, kerr := getKeys(ctx, s.Data)
+		if kerr != nil {
+			return kerr
 		}
-		if len(sps) > 0 {
-			return nil
+		for _, k := range keys {
+			verifier, err := signature.LoadECDSAVerifier(k, crypto.SHA256)
+			if err != nil {
+				logging.FromContext(ctx).Errorf("error creating verifier: %v", err)
+				lastErr = err
+				continue
+			}
+
+			sps, err := validSignatures(ctx, ref, verifier, "", opts...)
+			if err != nil {
+				logging.FromContext(ctx).Errorf("error validating signatures: %v", err)
+				lastErr = err
+				continue
+			}
+			if len(sps) > 0 {
+				return nil
+			}
 		}
+		logging.FromContext(ctx).Debug("No valid signatures were found.")
+		return lastErr
 	}
-	logging.FromContext(ctx).Debug("No valid signatures were found.")
-	return lastErr
 }
 
 // For testing
 var cosignVerifySignatures = cosign.VerifyImageSignatures
 
-func validSignatures(ctx context.Context, ref name.Reference, verifier signature.Verifier, opts ...ociremote.Option) ([]oci.Signature, error) {
+func validSignatures(ctx context.Context, ref name.Reference, verifier signature.Verifier, email string, opts ...ociremote.Option) ([]oci.Signature, error) {
 	sigs, _, err := cosignVerifySignatures(ctx, ref, &cosign.CheckOpts{
 		RegistryClientOpts: opts,
 		RootCerts:          fulcioroots.Get(),
 		SigVerifier:        verifier,
 		ClaimVerifier:      cosign.SimpleClaimVerifier,
+		CertEmail: 			email,
 	})
 	return sigs, err
 }
 
-func getKeys(ctx context.Context, keyMappings []v1alpha1.KeyToImageMapping, keyContents []v1alpha1.Key) ([]*ecdsa.PublicKey, *apis.FieldError) {
+func getKeys(ctx context.Context, cfg map[string][]byte) ([]*ecdsa.PublicKey, *apis.FieldError) {
 	keys := []*ecdsa.PublicKey{}
 	errs := []error{}
 
-	for _, keyMapping := range keyMappings {
+	logging.FromContext(ctx).Debugf("Got public key: %v", cfg["cosign.pub"])
+
+	pems := parsePems(cfg["cosign.pub"])
+	for _, p := range pems {
 		// TODO: (@dlorenc) check header
-		for _, keyContent := range keyContents{
-			if(keyContent.Name == keyMapping.Name) {
-				pemBlock, _ := pem.Decode([]byte(keyContent.PublicKey))
-				if pemBlock == nil {
-					errs = append(errs, errors.New("error decoding key specified in policy"))
-				}
-				key, err := x509.ParsePKIXPublicKey(pemBlock.Bytes)
-				if err != nil {
-					errs = append(errs, err)
-				} else {
-					keys = append(keys, key.(*ecdsa.PublicKey))
-				}
-			} 
+		key, err := x509.ParsePKIXPublicKey(p.Bytes)
+		if err != nil {
+			errs = append(errs, err)
+		} else {
+			keys = append(keys, key.(*ecdsa.PublicKey))
 		}
 	}
 	if keys == nil {
 		return nil, apis.ErrGeneric(fmt.Sprintf("malformed cosign.pub: %v", errs), apis.CurrentField)
 	}
 	return keys, nil
+}
+
+func parsePems(b []byte) []*pem.Block {
+	p, rest := pem.Decode(b)
+	if p == nil {
+		return nil
+	}
+	pems := []*pem.Block{p}
+
+	if rest != nil {
+		return append(pems, parsePems(rest)...)
+	}
+	return pems
 }

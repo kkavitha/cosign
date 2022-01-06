@@ -21,46 +21,47 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // ClusterImagePolicySpec defines the desired state of ImagePolicy
-type ClusterImagePolicySpec struct {
-	// +kubebuilder:validation:MinItems=1
-	// Images is list of images that are going to be considered for this policy.
-	Images []Image `json:"images"`
-}
+type IdentitySpec struct {
+	// Secret is the name of the secret that holds the public key
+	Secret string `json:"secret,omitempty"`
 
-type Image struct {
-	// +kubebuilder:validation:Required
-	// NamePattern defines the image name pattern as a (e.g. `registry/path/to/image`).
-	NamePattern string `json:"namePattern"`
+	// Namespace is the namepace where the secret is stored
+	Namespace string `json:"namespace,omitempty"`
 
-	// +kubebuilder:validation:MinItems=1
-	// Identities is a map with the references to the identity
-	Identities []IdentityRef `json:"identities"`
-}
+	// Issuer is the OIDC identity provider
+	Issuer string `json:"issuer,omitempty"`
 
-type IdentityRef struct {
-	Name string
+	// Subject is the OIDC email address of the entity signing the artifact
+	Subject string `json:"subject,omitempty"`
+
+	// RekorURL is the URL to the service that hosts the transparency logs
+	RekorURL string `json:"rekorurl,omitempty"`
+
+	// FulcioEndpoint is the fulcio service endpoint
+	FulcioEndpoint string `json:"fulcioendpoint,omitempty"`
+
 }
 
 //+kubebuilder:object:root=true
-//+kubebuilder:resource:path=clusterimagepolicies,scope=Cluster
+//+kubebuilder:resource:path=identities,scope=Cluster
 
 // ClusterImagePolicy is the Schema for the imagepolicies API
-type ClusterImagePolicy struct {
+type Identity struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec ClusterImagePolicySpec `json:"spec,omitempty"`
+	Spec IdentitySpec `json:"spec,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 
 // ClusterImagePolicyList contains a list of ClusterImagePolicy
-type ClusterImagePolicyList struct {
+type IdentityList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ClusterImagePolicy `json:"items"`
+	Items           []Identity `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&ClusterImagePolicy{}, &ClusterImagePolicyList{})
+	SchemeBuilder.Register(&Identity{}, &IdentityList{})
 }
